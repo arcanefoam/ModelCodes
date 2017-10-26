@@ -12,10 +12,27 @@
  ******************************************************************************/
 package org.eclipse.epsilon.emg.dt.launching;
 
+/**
+ * The configuration attributes for the EMG launch configration.
+ * 
+ * @author Horacio Hoyos
+ *
+ */
 public class EmgLaunchConfigurationAttributes {
-
+	
+	/**
+	 * The seed to use for the random generator
+	 */
 	public static final String SEED = "genModelSeed";
+	
+	/**
+	 * If the seed should be used, or if the generation uses a system genereated seed.
+	 */
 	public static final String USE_SEED = "useSeed";
+	
+	/**
+	 * The default value for the seed (in the configuration dialog)
+	 */
 	public static final String DEFAULT_SEED = "123456789";
 	
 	

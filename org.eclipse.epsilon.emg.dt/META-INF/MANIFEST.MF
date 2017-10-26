@@ -2,7 +2,7 @@ Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
 Bundle-Name: Epsilon Model Generator Development Tools
 Bundle-SymbolicName: org.eclipse.epsilon.emg.dt;singleton:=true
-Bundle-Version: 1.3.0.qualifier
+Bundle-Version: 1.5.0.qualifier
 Bundle-Activator: org.eclipse.epsilon.emg.dt.EmgPlugin
 Bundle-Vendor: Eclipse Modeling Project
 Require-Bundle: org.eclipse.jface.text,
@@ -19,4 +19,4 @@ Export-Package: org.eclipse.epsilon.emg.dt,
  org.eclipse.epsilon.emg.dt.launching,
  org.eclipse.epsilon.emg.dt.launching.tabs,
  org.eclipse.epsilon.emg.dt.wizards
-Bundle-RequiredExecutionEnvironment: JavaSE-1.7
+Bundle-RequiredExecutionEnvironment: JavaSE-1.6
