@@ -1,0 +1,91 @@
+pre {
+	// Limited options for EAttribute types
+	var eAttTypes = Sequence{"EBoolean", "EChar", "EDate", "EDouble", "EFloat", "Eint", "ELong" };
+} 
+ 
+// Only one net
+operation PetriNet create(){
+	self.name = "emgTest";
+}
+
+// Fixed # of Places
+$instances 4
+@list places
+operation Place create(){
+	self.name = "P_" + nextString();
+	PetriNet.all.first().places.add(self);
+}
+
+// Transitions
+$instances Sequence{4, 10}
+@list transitions
+operation Transition create(){
+	self.name = "T_" + nextString();
+	PetriNet.all.first().transitions.add(self);
+}
+
+// Transitions for loops
+$instances 2
+@list loopTrans
+operation Transition create(){
+	self.name = "TL_" + nextString();
+	PetriNet.all.first().transitions.add(self);
+}
+
+// Connect a place to a transition
+@noRepeat
+pattern placeToTrans
+	p:Place
+		in: getNamedListValues("places"),
+	t:Transition
+		in: getNamedListValues("transitions")
+{	
+	onmatch {
+		var arc = new PlaceToTransArc();
+		arc.source = p;
+		arc.target = t;
+		PetriNet.all.first().arcs.add(arc);
+	}
+}
+
+// Connect a transition to a place
+$probability 1/(getNamedListValues("places")*getNamedListValues("transitions"))
+pattern transToPlace
+	p:Place
+		in: getNamedListValues("places"),
+	t:Transition
+		in: getNamedListValues("transitions")
+{	
+	onmatch {
+		var arc = new TransToPlaceArc();
+		arc.source = t;
+		arc.target = p;
+		PetriNet.all.first().arcs.add(arc);
+	}
+}
+
+// Loops
+$matches 2
+$probability getNamedListValues("loopTrans").size()/(getNamedListValues("places").size()*getNamedListValues("loopTrans").size())
+pattern loops
+	p:Place
+		in: getNamedListValues("places"),
+	t:Transition
+		in: getNamedListValues("loopTrans")
+	{
+		onmatch {
+			var arc = new PlaceToTransArc();
+			arc.source = p;
+			arc.target = t;
+			PetriNet.all.first().arcs.add(arc);
+			arc = new TransToPlaceArc();
+			arc.source = t;
+			arc.target = p;
+			PetriNet.all.first().arcs.add(arc);
+		}
+	}
+
+
+post {
+"GenDone".println();
+}

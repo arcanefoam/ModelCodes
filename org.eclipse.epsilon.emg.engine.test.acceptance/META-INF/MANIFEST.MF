@@ -1,8 +1,16 @@
 Manifest-Version: 1.0
 Bundle-ManifestVersion: 2
-Bundle-Name: Test
+Bundle-Name: Epsilon Model Generation Language Acceptance Tests
 Bundle-SymbolicName: org.eclipse.epsilon.emg.engine.test.acceptance
-Bundle-Version: 1.3.0.qualifier
+Bundle-Version: 1.5.0.qualifier
 Bundle-RequiredExecutionEnvironment: JavaSE-1.6
-Require-Bundle: org.eclipse.epsilon.emg.engine,
- org.junit
+Require-Bundle: org.hamcrest.all_1.3;bundle-version="1.3.0",
+ org.junit;bundle-version="4.12.0",
+ junitparams_1.1.0;bundle-version="1.1.0",
+ org.eclipse.epsilon.emg.engine,
+ org.eclipse.epsilon.eol.engine,
+ org.apache.commons.validator_1.6;bundle-version="1.6.0",
+ org.apache.commons.math3_3.6,
+ org.eclipse.epsilon.epl.engine;bundle-version="1.5.0",
+ org.eclipse.epsilon.emc.emf
+Bundle-Vendor: Eclipse.org
