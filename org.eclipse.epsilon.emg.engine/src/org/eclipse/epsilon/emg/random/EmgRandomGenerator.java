@@ -23,15 +23,15 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.apache.commons.math3.exception.NotStrictlyPositiveException;
 import org.apache.commons.math3.exception.NumberIsTooLargeException;
 import org.apache.commons.math3.random.RandomDataGenerator;
-import org.apache.commons.math3.random.RandomGeneratorFactory;
 import org.eclipse.epsilon.eol.exceptions.EolRuntimeException;
 import org.eclipse.epsilon.eol.execute.context.IEolContext;
 
-// TODO: Auto-generated Javadoc
 /**
  * The simplest implementation of the RandomAttributeGenerator interface.
  * All attributes are generated as strings. It is the responsibility of the
@@ -39,9 +39,7 @@ import org.eclipse.epsilon.eol.execute.context.IEolContext;
  * the Apache Commons Math RandomDataGenerator.
  *
  */
-public class EmgRandomGenerator
-        implements IEmgRandomGenerator<IEmgRandomGenerator.DefaultCharacterSet> {
-
+public class EmgRandomGenerator implements IEmgRandomGenerator {
 
     /** The uri scheme. */
     private final String[] URI_SCHEME = {"http", "ssh", "ftp"};
@@ -52,23 +50,26 @@ public class EmgRandomGenerator
     /** The generator. */
     private final RandomDataGenerator generator = new RandomDataGenerator();
 
-
     /** The context. */
     private final IEolContext context;
 
-
-    /** Be default we use a normal distribution. */
+    /** Be default we use a uniform distribution. */
     private Distribution globalDistribution = Distribution.Uniform;
 
     /** The lower bound of the distribution is 0. */
-    private double firstArg = 0;
+    private Number firstArg = 0;
 
     /** The upper bound of the distribution is 1 so probability tests will work */
-    private double secondArg = 1;
+    private Number secondArg = 1;
 
-    /** The list samples. */
-    private Map<String, List<Integer>> listSamples;
-
+    /** The sample indices for a given list. */
+    private Map<String, List<Integer>> listSamplesIndices;
+    
+    /** The list values for a given list. */
+    private Map<String, List<Object>> listValues;
+    
+    boolean refillListSamples;
+    
 
     /**
      * Instantiates a new emg random generator.
@@ -91,10 +92,20 @@ public class EmgRandomGenerator
         this.generator.reSeed(seed);
     }
 
-//	@Override
-//	public boolean contributesTo(Object target) {
-//		return target instanceof Object;
-//	}
+    public List<Integer> createListSampleIndices(int size) throws EolRuntimeException {
+		List<Integer> sampleIndices;
+		sampleIndices = new ArrayList<Integer>(size);
+		int[] indexArray = null;
+		try {
+		    indexArray = generator.nextPermutation(size, size);
+		} catch (NotStrictlyPositiveException | NumberIsTooLargeException e) {
+		    EolRuntimeException.propagate(e);
+		}
+		for (int i = 0; i < indexArray.length; i++) {
+		    sampleIndices.add(indexArray[i]);
+		}
+		return sampleIndices;
+	}
 
     /**
      * @return the generator
@@ -103,33 +114,23 @@ public class EmgRandomGenerator
         return generator;
     }
 
-    public List<Integer> getIndex(String listID, int size, Map<String, List<Integer>> sampleList)
-            throws EolRuntimeException {
-        List<Integer> index;
-        if (sampleList.containsKey(listID)) {
-            index = sampleList.get(listID);
-        } else {
-            index = new ArrayList<Integer>();
-            sampleList.put(listID, index);
-            int[] indexArray = null;
-            try {
-                indexArray = generator.nextPermutation(size, size);
-            } catch (NotStrictlyPositiveException | NumberIsTooLargeException e) {
-                EolRuntimeException.propagate(e);
-            }
-            for (int i = 0; i < indexArray.length; i++) {
-                index.add(indexArray[i]);
-            }
-        }
-        return index;
-    }
+    @Override
+	public boolean isFromListAsSampleRefill() {
 
+		return refillListSamples;
+	}
 
     @Override
     public List<Integer> nextAddTo(int n, int m) throws EolRuntimeException {
         assert n > 1;
-        int len = n-1;
-        int[] index = generator.nextPermutation(m, len);
+        int len = n>1 ? n-1: n;
+        int[] index = null;
+		try {
+        	index = generator.nextPermutation(m, len);
+        }
+        catch (NumberIsTooLargeException | NotStrictlyPositiveException ex ){
+        	EolRuntimeException.propagate(ex);
+        }
         List<Integer> values = new ArrayList<>();
         for (int i = 0; i < len; i++) {
             values.add(index[i]);
@@ -148,152 +149,89 @@ public class EmgRandomGenerator
         return result;
     }
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextBinomialValue(int, double)
-     */
-    @Override
-    public double nextBinomialValue(int numberOfTrials, double probabilityOfSuccess) {
-        return generator.nextBinomial((int) firstArg, secondArg);
-    }
-
     @Override
     public boolean nextBoolean() {
         return generator.getRandomGenerator().nextBoolean();
     }
-
 
     @Override
     public void nextBytes(byte[] bytes) {
          generator.getRandomGenerator().nextBytes(bytes);
     }
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextCamelCaseString(int, int)
-     */
     @Override
-    public String nextCamelCaseString(int length, int minWordLength) throws EolRuntimeException {
-
+    public String nextCamelCaseWords(String characterSet, int length, int minWordLength) throws EolRuntimeException {
+    	
+    	if (minWordLength > length) {
+    		throw new EolRuntimeException("Minimum word length can not be greater than length.");
+    	}
+    	if (!EmgCharacterSet.valueOf(characterSet).isAlpha()) {
+    		throw new EolRuntimeException("Character set is non-Alpha.");
+    	}
+    	double maxNumWords = Math.floor(length/minWordLength);
+    	int numWords = nextInt(1, (int) maxNumWords);
+    	int free = length - (numWords*minWordLength);
+    	List<Integer> extra;
+		try {
+    		extra = nextAddTo(numWords, free);
+    	}
+    	catch (EolRuntimeException ex) {
+    		Integer[] vals = new Integer[numWords]; 
+    		Arrays.fill(vals, 0);
+    		vals[0] = free;
+    		extra = Arrays.asList(vals);
+    	}
+    	for (int i = 0; i < extra.size(); i++) {
+    		extra.set(i, extra.get(i)+minWordLength);
+    	}
+		
         StringBuilder sb = new StringBuilder();
-        String base = nextString("LETTER_LOWER", length);
-        int[] chunks = new int[length/minWordLength +1];
-        int remaining = length;
-        int nextWord = 0;
-        chunks[0] = 0;
-        int i = 1;
-        do {
-            if (remaining > minWordLength) {
-                nextWord += nextInteger(minWordLength, remaining);
-                remaining -= nextWord;
+		for (Integer size : extra) {
+            String word = nextString(characterSet, size);
+        	char capital = word.charAt(0);
+            if (!Character.isUpperCase(capital)) {
+            	if (Character.isLetter(capital)) {
+            		capital = Character.toUpperCase(capital);
+            	}
+            	else {
+            		// Making it work for unknown charsets might be impossible...
+            		capital = 'A';
+            	}
             }
-            else {
-                nextWord = 1;	// So chunks[i++] is 0
-                remaining = 0;
-            }
-            try {
-                chunks[i++] = nextWord-1;
-            } catch (ArrayIndexOutOfBoundsException ex) {
-                break;
-            }
-        } while(remaining > 0);
-        //chunks[i] = length;
-        int index = 0;
-        for (int j = 0; j < chunks.length-1; j++) {
-            if ((j>0) && (chunks[j] == 0)) {
-                break;
-            }
-            index = chunks[j];
-            try {
-                String capital = base.substring(index, index+1).toUpperCase();
-                int endIndex = chunks[j+1];
-                if (endIndex == 0) {
-                    endIndex = length;
-                }
-                sb.append(capital);
-                sb.append(base.substring(index+1, endIndex));
-            } catch (StringIndexOutOfBoundsException ex) {
-                System.out.println(ex);
-            }
-
+            word = capital + word.substring(1).toLowerCase();
+            sb.append(word);
         }
         return sb.toString();
     }
 
     @Override
-    public String nextCapitalisedString(String charSet, int length) {
+    public String nextCapitalisedWord(String charSet, int length) throws EolRuntimeException {
+    	if (!EmgCharacterSet.valueOf(charSet).isAlpha()) {
+    		throw new EolRuntimeException("Character set is not Alpha (only letters).");
+    	}
         String lower = nextString(charSet, length);
         if (length > 1) {
-            return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
+            return Character.toUpperCase(lower.charAt(0)) + lower.substring(1).toLowerCase();
         }
         else {
             return Character.toString(lower.charAt(0)).toUpperCase();
         }
     }
 
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextDobule(double)
-     */
     @Override
-    public double nextDobule(double upper) throws EolRuntimeException {
-
-        return nextDobule(0, upper);
-    }
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextDobule(double, double)
-     */
-    @Override
-    public double nextDobule(double lower, double upper) {
-
-        double diff = upper-lower;
-        if (diff == 0) {
-            return lower;
-        }
-        if(upper<lower) {
-            return generator.getRandomGenerator().nextDouble()*diff + upper;
-        }
-        return generator.getRandomGenerator().nextDouble()*diff + lower;
-    }
-
-    @Override
-    public double nextDouble() {
-        return generator.getRandomGenerator().nextDouble();
-    }
-
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextExponentialValue(double)
-     */
-    @Override
-    public double nextExponentialValue(double mean) {
-        return generator.nextExponential(firstArg);
-    }
-
-    @Override
-    public float nextFloat() {
-        return generator.getRandomGenerator().nextFloat();
-    }
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextFromCollection(java.util.Collection)
-     */
-    @Override
-    public Object nextFromCollection(Collection<?> c) {
-
+    public Object nextFromCollection(Collection<?> c) throws EolRuntimeException {
+    	
+    	if (c.isEmpty()) {
+    		return null;
+    	}
         int upper = c.size()-1;
         int index = 0;
-        try {
-            index = nextInteger(0, upper);
-        } catch (NumberFormatException | EolRuntimeException e) {
-            // Should never get here
-            e.printStackTrace();
-        }
+        index = nextInt(0, upper);
         Object[] objects = c.toArray();
-        //String result = (String) objects[index];
         return objects[index];
     }
 
-    /**
+	/**
      * The listID must be the name of a parameter in the launch configuration.
      * The value of the parameter can be either a CSV list of strings or the
      * name of a file. The name of the file should be full path and each line in
@@ -303,13 +241,11 @@ public class EmgRandomGenerator
      */
     @Override
     public Object nextFromList(String listID) throws EolRuntimeException {
-        // Get the list from the context
-        String list = (String) context.getFrameStack().get(listID).getValue();
-        List<String> valuesList = getValuesFromList(list);
-        return (String) nextFromCollection(valuesList);
+        List<Object> values = getValuesByListId(listID);
+    	return (String) nextFromCollection(values);
     }
 
-    /**
+	/**
      * The listID must be the name of a parameter in the launch configuration.
      * The value of the parameter can be either a CSV list of strings or the
      * name of a file. The name of the file should be full path and each line in
@@ -319,34 +255,38 @@ public class EmgRandomGenerator
      */
     @Override
     public Object nextFromListAsSample(String listID) throws EolRuntimeException {
-        // Get the list from the context
-        String list = (String) context.getFrameStack().get(listID).getValue();
-        List<String> valuesList = getValuesFromList(list);
-        int size = valuesList.size();
-        String[] values = new String[size];
-        values = valuesList.toArray(values);
-        Map<String, List<Integer>> sampleList = getListSamples();
-        List<Integer> index = getIndex(listID, size, sampleList);
-        String result = null;
-        try {
-            result = valuesList.get(index.remove(0));
+    	
+    	List<Object> values = getValuesByListId(listID);
+    	List<Integer> sampleIndices = getListSampleIndices().get(listID);
+    	if (sampleIndices == null) {
+    		sampleIndices = createListSampleIndices(values.size());
+    		getListSampleIndices().put(listID, sampleIndices);
+    	}	
+        Object result = null;
+        int index = 0;
+		try {
+            index = sampleIndices.remove(0);
         } catch (IndexOutOfBoundsException e) {
-            // TODO An additional configuration parameter could be used to generate a new index array
-            System.out.println("No more elements to pick from the list, " + listID);
-            //EolRuntimeException.propagate(e);
+        	if (refillListSamples) {
+        		sampleIndices = createListSampleIndices(values.size());
+        		getListSampleIndices().put(listID, sampleIndices);
+        		index = sampleIndices.remove(0);
+        	}
+        	else {
+        		throw new EolRuntimeException("No more elements to sample from the list, " + listID);
+        	}
         }
+        result = values.get(index);
         return result;
     }
 
     @Override
-    public double nextGaussian() {
-        return generator.getRandomGenerator().nextGaussian();
-    }
+	public float nextGaussian() {
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextHttpURI(boolean, boolean, boolean, boolean)
-     */
-    @Override
+		return (float) generator.nextGaussian(0.0, 1.0);
+	}
+
+	@Override
     public String nextHttpURI(boolean addPort, boolean addPath,
             boolean addQuery, boolean addFragment) throws EolRuntimeException {
 
@@ -356,106 +296,81 @@ public class EmgRandomGenerator
         sb.append("://");
         // Host
         sb.append("www.");
-        sb.append(nextString("LETTER", nextInteger(6, 10)));
+        sb.append(nextString("LETTER", nextInt(6, 10)));
         sb.append(getRandomUriDomain());
         if (addPort) {
             sb.append(":");
-            sb.append(nextInteger(9999));
+            sb.append(nextInt(9999));
         }
         sb.append("/");
         if (addPath) {
-            for (int i = 0; i < nextInteger(1, 4); i++) {
-                sb.append(nextString("LETTER_LOWER", nextInteger(3, 6)));
+            for (int i = 0; i < nextInt(1, 4); i++) {
+                sb.append(nextString("LETTER_LOWER", nextInt(3, 6)));
                 sb.append("/");
             }
         }
         if (addQuery) {
             String separator = "?";
-            for (int i = 0; i < nextInteger(1, 4); i++) {
+            for (int i = 0; i < nextInt(1, 4); i++) {
                 sb.append(separator);
-                sb.append(nextString("LETTER_LOWER", nextInteger(3, 5)));
+                sb.append(nextString("LETTER_LOWER", nextInt(3, 5)));
                 sb.append("=");
-                sb.append(nextString("NUMERIC", nextInteger(5, 8)));
+                sb.append(nextString("NUMERIC", nextInt(5, 8)));
                 separator = "&";
             }
         }
         if (addFragment) {
             sb.append("#");
-            sb.append(nextString("ID_SYMBOL", nextInteger(1, 15)));
+            sb.append(nextString("ID_SYMBOL", nextInt(1, 15)));
         }
         return sb.toString();
     }
 
-    @Override
+	@Override
     public int nextInt() {
         return generator.getRandomGenerator().nextInt();
     }
-
+    	
     @Override
     public int nextInt(int n) {
         return generator.getRandomGenerator().nextInt(n);
     }
 
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextIngeter(int)
-     */
     @Override
-    public int nextInteger(int upper) throws EolRuntimeException {
-
-        return nextInteger(0, upper);
-    }
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextIngeter(int, int)
-     */
-    @Override
-    public int nextInteger(int lower, int upper) throws EolRuntimeException {
-
-        int value = 0;
-        try {
-            value = generator.nextInt(lower, upper);
+	public int nextInt(int lower, int upper) throws EolRuntimeException {
+    	
+    	try {
+            return generator.nextInt(lower, upper);
         } catch (NumberIsTooLargeException e) {
             EolRuntimeException.propagate(e);
         }
-        return value;
-    }
+		return 0;
+	}
 
     @Override
-    public long nextLong() {
-        return generator.getRandomGenerator().nextLong();
-    }
+	public float nextReal() {
+    	return generator.getRandomGenerator().nextFloat();
+	}
 
-
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextLong(long)
-     */
     @Override
-    public long nextLong(long upper) throws EolRuntimeException {
+	public float nextReal(float n) throws EolRuntimeException {
+    	return nextReal(0, n);
+	}
 
-        return nextLong(0, upper);
-    }
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextLong(long, long)
-     */
     @Override
-    public long nextLong(long lower, long upper) throws EolRuntimeException {
-
-        long value = 0;
-        try {
-            value = generator.nextLong(lower, upper);
-        } catch (NumberIsTooLargeException e) {
-            EolRuntimeException.propagate(e);
+	public float nextReal(float lower, float upper) throws EolRuntimeException {
+    	if(upper < lower) {
+            //return generator.getRandomGenerator().nextFloat()*diff + upper;
+    		throw new EolRuntimeException("Upper limit must be greater than lower limit.");
         }
-        return value;
-    }
+    	float diff = upper-lower;
+        if (diff == 0) {
+            return lower;
+        }
+        return generator.getRandomGenerator().nextFloat()*diff + lower;
+	}
 
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextSample(java.util.Collection, int)
-     */
     @Override
     public List<Object> nextSample(Collection<?> c, int k) throws EolRuntimeException {
 
@@ -479,35 +394,44 @@ public class EmgRandomGenerator
      */
     @Override
     public List<Object> nextSample(String listID, int k) throws EolRuntimeException {
-        // Get the list from the context
-        String list = (String) context.getFrameStack().get(listID).getValue();
-        List<String> valuesList = getValuesFromList(list);
+        List<Object> valuesList = getValuesByListId(listID);
         List<Object> sample = null;
         try {
             Object[] result = generator.nextSample(valuesList, k);
             sample = new ArrayList<Object>(result.length);
-            for (int i=0; i < result.length; i++)
+            for (int i=0; i < result.length; i++) {
                 sample.add((String) result[i]);
+            }
         } catch (NotStrictlyPositiveException | NumberIsTooLargeException e) {
             EolRuntimeException.propagate(e);
         }
         return sample;
     }
+   
+    @Override
+	public String nextString() {
+		try {
+			return nextString(nextInt(4, 10));
+		} catch (EolRuntimeException e) {
+			// should not get here
+		}
+		return "DefaultString";
+	}
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextString(java.lang.String, int)
-     */
+    @Override
+	public String nextString(int length) {
+		return nextString("LETTER", length);
+	}
+
     @Override
     public String nextString(String charSet, int length) {
-        DefaultCharacterSet cSet = null;
-        for (DefaultCharacterSet cs : DefaultCharacterSet.values()) {
-            if (cs.name().equals(charSet)) {
-                cSet = cs;
-                break;
-            }
-        }
-        if (cSet == null) {
-            cSet = DefaultCharacterSet.ID;
+
+		EmgCharacterSet cSet;
+		try {
+        	cSet = EmgCharacterSet.valueOf(charSet);
+    	}
+    	catch (IllegalArgumentException ex) {
+    		cSet = EmgCharacterSet.LETTER;
         }
         StringBuilder sb = new StringBuilder();
         char[] chars = cSet.getCharacters();
@@ -517,18 +441,12 @@ public class EmgRandomGenerator
         return sb.toString();
     }
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextURI()
-     */
     @Override
     public String nextURI() throws EolRuntimeException {
 
         return nextURI(nextBoolean(), nextBoolean(), nextBoolean(), nextBoolean());
     }
 
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextURI(boolean, boolean, boolean, boolean)
-     */
     @Override
     public String nextURI(boolean addPort, boolean addPath, boolean addQuery, boolean addFragment) throws EolRuntimeException {
 
@@ -540,69 +458,129 @@ public class EmgRandomGenerator
         // user:password
         if (!uriScheme.equals("http")) {
             if (nextBoolean()) {
-                sb.append(nextString("LETTER_LOWER", nextInteger(6, 10)));
+                sb.append(nextString("LETTER_LOWER", nextInt(6, 10)));
                 if (nextBoolean()) {
                     sb.append(":");
-                    sb.append(generator.nextSecureHexString(nextInteger(6, 10)));
+                    sb.append(generator.nextSecureHexString(nextInt(6, 10)));
                 }
                 sb.append("@");
             }
         }
         // Host
         sb.append("www.");
-        sb.append(nextString("LETTER", nextInteger(6, 10)));
+        sb.append(nextString("LETTER", nextInt(6, 10)));
         sb.append(getRandomUriDomain());
         if (addPort) {
             sb.append(":");
-            sb.append(nextInteger(9999));
+            sb.append(nextInt(9999));
         }
         sb.append("/");
         if (addPath) {
-            for (int i = 0; i < nextInteger(1, 4); i++) {
-                sb.append(nextString("LETTER_LOWER", nextInteger(3, 6)));
+            for (int i = 0; i < nextInt(1, 4); i++) {
+                sb.append(nextString("LETTER_LOWER", nextInt(3, 6)));
                 sb.append("/");
             }
         }
         if (addQuery) {
             String separator = "?";
-            for (int i = 0; i < nextInteger(1, 4); i++) {
+            for (int i = 0; i < nextInt(1, 4); i++) {
                 sb.append(separator);
-                sb.append(nextString("LETTER_LOWER", nextInteger(3, 5)));
+                sb.append(nextString("LETTER_LOWER", nextInt(3, 5)));
                 sb.append("=");
-                sb.append(nextString("NUMERIC", nextInteger(5, 8)));
+                sb.append(nextString("NUMERIC", nextInt(5, 8)));
                 separator = "&";
             }
         }
         if (addFragment) {
             sb.append("#");
-            sb.append(nextString("ID_SYMBOL", nextInteger(1, 15)));
+            sb.append(nextString("ID_SYMBOL", nextInt(1, 15)));
         }
         return sb.toString();
     }
-
-    /* (non-Javadoc)
-     * @see org.eclipse.epsilon.emg.random.IEmgRandomGenerator#nextValue()
-     */
+    
     @Override
-    public double nextValue() {
+    public String nextUUID() {
+    	return UUID.randomUUID().toString();
+    }
+    
+
+    @Override
+    public float nextValue() throws EolRuntimeException {
+    	double result = 0.0;
+    	try {
         switch(globalDistribution) {
-            case Binomial:
-                return nextBinomialValue((int) firstArg, secondArg);
-            case Exponential:
-                return nextExponentialValue(firstArg);
-            case Uniform:
-                return generator.nextUniform(firstArg, secondArg);
-            default:
-                return 0;
+        case Binomial:
+        	result =  generator.nextBinomial(firstArg.intValue(), secondArg.doubleValue());
+        	break;
+        case Exponential:
+        	result =  generator.nextExponential(firstArg.doubleValue());
+        	break;
+        case Uniform:
+        	result = generator.nextUniform(firstArg.doubleValue(), secondArg.doubleValue(), true);
+        	break;
+		default:
+			break;
         }
+    	}
+    	catch (Exception ex) {
+    		EolRuntimeException.propagate(ex);
+    		
+    	}
+        return (float) result;
     }
 
     @Override
+	public float nextValue(Distribution distribution, Number[] args)
+			throws EolRuntimeException {
+    	
+    	double result = 0.0;
+    	try {
+    	switch(globalDistribution) {
+        case Binomial:
+        	result =  generator.nextBinomial(args[0].intValue(), args[1].doubleValue());
+        	break;
+        case Exponential:
+        	result =  generator.nextExponential(args[0].doubleValue());
+        	break;
+        case Uniform:
+        	result = generator.nextUniform(args[0].doubleValue(), args[1].doubleValue(), true);
+        	break;
+		default:
+			break;
+        }
+    	}
+    	catch (IndexOutOfBoundsException ex) {
+    		EolRuntimeException.propagate(ex);
+    	}
+    	return (float) result;
+	}
+
+    @Override
+	public void setFromListAsSampleRefill(boolean refill) {
+    	
+    	refillListSamples = refill;
+	}
+
+	@Override
+	public void setNextValueDistribution(Distribution distribution,
+			Number[] args) throws EolRuntimeException {
+		
+		this.globalDistribution = distribution;
+		try {
+			this.firstArg = args[0];
+			this.secondArg = args[1];
+		}
+		catch (IndexOutOfBoundsException ex) {
+			// Pass, the exception will be thrown when creating the value
+		}
+	}
+
+	@Override
     public void setSeed(int seed) {
         generator.reSeed(seed);
     }
 
-    @Override
+	@Override
     public void setSeed(int[] seed) {
         // the following number is the largest prime that fits in 32 bits (it is 2^32 - 5)
         final long prime = 4294967291l;
@@ -613,80 +591,32 @@ public class EmgRandomGenerator
         setSeed(combined);
     }
 
-    @Override
+	@Override
     public void setSeed(long seed) {
         generator.reSeed(seed);
     }
 
-    /**
-     * Use binomial distribution.
-     *
-     * @param numberOfTrials the number of trials
-     * @param probabilityOfSuccess the probability of success
-     */
-    public void useBinomialDistribution(int numberOfTrials, double probabilityOfSuccess) {
-        this.globalDistribution = Distribution.Binomial;
-        this.firstArg = numberOfTrials;
-        this.secondArg = probabilityOfSuccess;
-    }
-
-    /**
-     * Use exponential distribution.
-     *
-     * @param mean the mean
-     */
-    public void useExponentialDistribution(double mean) {
-        this.globalDistribution = Distribution.Exponential;
-        this.firstArg = mean;
-    }
-
-    /**
-     * Gets the list samples.
-     *
-     * @return the listSamples
-     */
-    private Map<String, List<Integer>> getListSamples() {
-        if (listSamples == null) {
-            listSamples = new HashMap<String, List<Integer>>();
-        }
-        return listSamples;
-    }
-
-    /**
-     * Gets the random uri domain.
-     *
-     * @return the random uri domain
-     */
-    private String getRandomUriDomain() {
-        return (String) nextFromCollection(Arrays.asList(URI_DOMAIN));
-    }
-
-    /**
-     * Gets the random uri scheme.
-     *
-     * @return the random uri scheme
-     */
-    private String getRandomUriScheme() {
-        return (String) nextFromCollection(Arrays.asList(URI_SCHEME));
-    }
-
-    /**
-     * Gets the values from list.
+	/**
+     * Gets the values from list. If the list has commas it is treated as a CSV
+     * and the result is crated by splitting the list. If not, the list
+     * is considered a path and each line of the target file is used as an
+     * element of the result.
      *
      * @param list the list
      * @return the values from list
      * @throws EolRuntimeException the eol runtime exception
      */
-    protected List<String> getValuesFromList(String list) throws EolRuntimeException {
+    private List<Object> getListValues(String list) throws EolRuntimeException {
         // TODO We assume URI/paths don't have commas
         String[] values = list.split(",");
-        List<String> valuesList = null;
+        List<Object> valuesList = null;
         if (values.length == 1) {
             // It should be a path
-            File file = new File(list);
-            if (file.isDirectory())
-               throw new EolRuntimeException("Given list path is not a valid file.");
-            if (file.exists()){
+            File file = new File(values[0]);
+            if (file.isDirectory()) {
+               throw new EolRuntimeException("Path is not a file: " + values[0]);
+            }
+            if (file.exists()) {
                 Scanner s = null;
                 try {
                     s = new Scanner(file);
@@ -694,19 +624,71 @@ public class EmgRandomGenerator
                     EolRuntimeException.propagate(e);
                 }
                 if (s != null) {
-                    valuesList = new ArrayList<String>();
-                    while (s.hasNext()){
-                        valuesList.add(s.next());
+                    valuesList = new ArrayList<Object>();
+                    while (s.hasNextLine()){
+                        valuesList.add(s.nextLine());
                     }
                     s.close();
                 }
             }
+            else {
+            	throw new EolRuntimeException("Path does not exist: " + values[0]);
+            }
         }
         else {
-            valuesList = Arrays.asList(values);
+            valuesList = Arrays.stream(values).map(Object.class::cast).collect(Collectors.toList());
 
         }
         return valuesList;
     }
 
+	/**
+     * Gets the random uri domain.
+     *
+     * @return the random uri domain
+	 * @throws EolRuntimeException 
+     */
+    private String getRandomUriDomain() throws EolRuntimeException {
+        return (String) nextFromCollection(Arrays.asList(URI_DOMAIN));
+    }
+
+	/**
+     * Gets the random uri scheme.
+     *
+     * @return the random uri scheme
+	 * @throws EolRuntimeException 
+     */
+    private String getRandomUriScheme() throws EolRuntimeException {
+        return (String) nextFromCollection(Arrays.asList(URI_SCHEME));
+    }
+
+	private List<Object> getValuesByListId(String listID) throws EolRuntimeException {
+		List<Object> values = getListValues().get(listID);
+    	if (values == null) {
+    		String list;
+			try {
+    			list = (String) context.getFrameStack().get(listID).getValue();
+    		}
+    		catch (NullPointerException ex) {
+    			throw new EolRuntimeException(String.format("List $s not found", listID));
+    		}
+    		values = getListValues(list);
+    		getListValues().put(listID, values);
+    	}
+		return values;
+	}
+
+	protected Map<String, List<Integer>> getListSampleIndices() {
+		if (listSamplesIndices == null) {
+			listSamplesIndices = new HashMap<>();
+		}
+		return listSamplesIndices;
+	}
+
+	protected Map<String, List<Object>> getListValues() {
+		if (listValues == null) {
+			listValues = new HashMap<>();
+		}
+		return listValues;
+	}
 }

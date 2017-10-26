@@ -12,24 +12,18 @@
  ******************************************************************************/
 package org.eclipse.epsilon.emg;
 
-import java.net.URISyntaxException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.eclipse.emf.common.util.URI;
-import org.eclipse.epsilon.common.util.StringProperties;
-import org.eclipse.epsilon.emc.emf.EmfModel;
-import org.eclipse.epsilon.emg.operationContributors.EmgOperationContributor;
+import org.eclipse.epsilon.emg.operations.contributors.EmgOperationContributor;
 import org.eclipse.epsilon.eol.dom.Annotation;
 import org.eclipse.epsilon.eol.dom.AnnotationBlock;
 import org.eclipse.epsilon.eol.dom.Operation;
 import org.eclipse.epsilon.eol.exceptions.EolRuntimeException;
 import org.eclipse.epsilon.eol.exceptions.models.EolModelElementTypeNotFoundException;
-import org.eclipse.epsilon.eol.exceptions.models.EolModelLoadingException;
-import org.eclipse.epsilon.eol.models.IModel;
-import org.eclipse.epsilon.eol.models.IRelativePathResolver;
 import org.eclipse.epsilon.eol.types.EolModelElementType;
 import org.eclipse.epsilon.epl.EplModule;
 import org.eclipse.epsilon.epl.execute.PatternMatchModel;
@@ -68,12 +62,11 @@ public class EmgModule extends EplModule {
     private boolean useSeed;
 
 
-
     /** A maps to keep track of objects created by create operations that
      * us the @name annotation. The key of the map is the value of the
      * annotation.
      */
-    private Map<String, List<Object>> namedCreatedObjects= new HashMap<String, List<Object>>(); //
+    private Map<String, List<Object>> namedCreatedObjects= new HashMap<String, List<Object>>();
 
 
     /**
@@ -173,167 +166,111 @@ public class EmgModule extends EplModule {
      * @throws EolModelElementTypeNotFoundException the eol model element type not found exception
      * @throws EolRuntimeException If the type to be instantiated can't be found or any of the random functions fails.
      */
-    protected void executeCreateOperations() throws EolRuntimeException  {
+    @SuppressWarnings("unchecked")
+	protected void executeCreateOperations() throws EolRuntimeException  {
 
         AnnotationBlock annotationBlock;
-        String annotationName,instancesListName;
-        String parameters = null;
-        for (Operation operation: getOperations()){
-            if(operation.getName().equals(CREATE_OPERATION)) {
-                //get the class context
+        String annotationName;
+        String instancesListName;
+        List<Object> arguments;
+        int numInstances;
+        
+        for (Operation operation: getOperations()) {
+            if (operation.getName().equals(CREATE_OPERATION)) {
+                //Get the class that has to be instantiated
                 EolModelElementType instancesType = (EolModelElementType) operation.getContextType(context);
                 if (!instancesType.isInstantiable()) {
                     continue;
                 }
-                int instances = 1;
-                instancesListName="";
-                //guard="";
-                //get the annotations
+                // Default values
+                numInstances = 1;
+                instancesListName = "";             
+                arguments = Collections.emptyList();
+                
                 annotationBlock = operation.getAnnotationBlock();
-                if(!(annotationBlock==null)){
+                if (!(annotationBlock==null)){
                     List<Object> annotationValues;
-                    for(Annotation annotation:annotationBlock.getAnnotations()){
-                        if(!(annotation.hasValue()))
+                    for (Annotation annotation:annotationBlock.getAnnotations()){
+                        if (!(annotation.hasValue())) {
                             continue;
+                        }
                         annotationName = annotation.getName();
                         annotationValues = operation.getAnnotationsValues(annotationName, context);
-                        //search for instances to be created
-                        if(annotationName.equals(NUMBER_OF_INSTANCES_ANNOTATION)){
-                            if (!annotationValues.isEmpty()) {
+                        
+                        switch (annotationName) {
+                        case NUMBER_OF_INSTANCES_ANNOTATION:
+                        	if (!annotationValues.isEmpty()) {
                                 Object val=annotationValues.get(0);
-                                if(val instanceof List){
-                                    List<?> valC = (List<?>)val;
+                                if (val instanceof List) {
+                                    List<?> valC = (List<?>) val;
                                     if(valC.size()>1)
-                                        instances = randomGenerator.nextInteger(getInt(valC.get(0)), getInt(valC.get(1)));
+                                        numInstances = randomGenerator.nextInt(getInt(valC.get(0)), getInt(valC.get(1)));
                                     else
-                                        instances= getInt(valC.get(0));
+                                        numInstances= getInt(valC.get(0));
                                 }
-                                else
-                                    instances = getInt( annotationValues.get(0));
+                                else {
+                                    numInstances = getInt( annotationValues.get(0));
+                                }
                             }
-                            if(instances<1)
-                                instances=1;
-                        }
-                        else if(annotationName.equals(LIST_ID_ANNOTATION)){
-                            if (!annotationValues.isEmpty()) {
+                            if (numInstances < 0) {
+                                numInstances = 0;
+                            }
+                            break;
+                        case LIST_ID_ANNOTATION:
+                        	if (!annotationValues.isEmpty()) {
                                 instancesListName = (String) annotationValues.get(0);
                             }
-                        }
-                        // Parameters for element initialization
-                        else if(annotationName.equals(PARAMETERS_ANNOTATION)){
-                            if (!annotationValues.isEmpty()) {
-                                //parameters = (List<Object>) annotationValues.get(0);
-                                parameters = annotationName;
+                        	break;
+                        case PARAMETERS_ANNOTATION:
+                        	if (!annotationValues.isEmpty()) {
+                        		Object annotationParameters = annotationValues.get(0);
+                        		assert annotationParameters instanceof List;
+                        		arguments = (List<Object>) annotationParameters;
                             }
-                        }
-
-//						else if(annotationName.equals("guard")){
-//							if (!annotationValues.isEmpty()) {
-//								guard = (String) annotationValues.get(0);
-//							}
-//						}
+                        	break;
+                        }                    
                     }//end for loop annotations
                 }
                 // Create the instances
-                createInstances(instancesListName, operation, instancesType, instances, parameters);
-                parameters = null;
+                createInstances(operation, instancesType, numInstances, instancesListName, arguments);
+                
             }
 
         }//end for loop (operations)
-        //System.out.println(ne);
-        //model.store(ne.substring(1));
-        //System.out.println("generation time is: "+(System.currentTimeMillis()-time));
     }
+    
 
     /**
-     * @param instancesListName
-     * @param operation
-     * @param instancesType
-     * @param instances
-     * @param paramAnotation
+     * @param operation				The "create" operation, will be invoked with the new instance as argument
+     * @param instancesType			The type of the new instance
+     * @param numInstances			Number of instances to create
+     * @param instancesListName		Name of the list where instances are collected, if any
+     * @param arguments			The list of arguments used to instantiate the object
      * @return
      * @throws EolRuntimeException
      */
-    @SuppressWarnings("unchecked")
-    private void createInstances(String instancesListName, Operation operation,
-            EolModelElementType instancesType, int instances, String paramAnotation) throws EolRuntimeException {
-        ArrayList<Object> classes= new ArrayList<Object>();
-        // Add the list to the context first so previous instances can be used for attribute assignment
-        if(!instancesListName.isEmpty()) {
-            if(namedCreatedObjects.containsKey(instancesListName)){
-                namedCreatedObjects.get(instancesListName).addAll(classes);
+    private void createInstances(Operation operation, EolModelElementType instancesType,
+            int numInstances, String instancesListName, List<Object> arguments) throws EolRuntimeException {
+    	
+    	List<Object> instances = null;
+    	if (!instancesListName.isEmpty()) {
+            instances = namedCreatedObjects.get(instancesListName);
+            if (instances == null) {
+                instances = new ArrayList<Object>(numInstances);
+            	namedCreatedObjects.put(instancesListName, instances);
             }
-            else
-                namedCreatedObjects.put(instancesListName, classes);
         }
-        for(int i=0;i<instances;i++){
-            List<Object> paramObj = null;
-            if (paramAnotation != null) {
-                List<Object> annotationValues = operation.getAnnotationsValues(paramAnotation, context);
-                paramObj = (List<Object>) annotationValues.get(0);
-                assert paramObj instanceof List;
-            }
-            Object modelObject = instancesType.createInstance(paramObj);
-            // Execute statements in the operation to initialise object attributes
+        for (int i=0; i<numInstances; i++) {  
+            Object modelObject = instancesType.createInstance(arguments);
             operation.execute(modelObject, null, context);
-            classes.add(modelObject);
-        }
-    }
-
-    /**
-     * Creates the emf model.
-     *
-     * @param name the name
-     * @param model the model
-     * @param metamodel the metamodel
-     * @param readOnLoad the read on load
-     * @param storeOnDisposal the store on disposal
-     * @return the emf model
-     * @throws EolModelLoadingException the eol model loading exception
-     * @throws URISyntaxException the URI syntax exception
-     */
-    @Deprecated
-    protected static EmfModel createEmfModel(String name, String model,
-            String metamodel, boolean readOnLoad, boolean storeOnDisposal)
-                    throws EolModelLoadingException, URISyntaxException {
-        EmfModel emfModel = new EmfModel();
-        StringProperties properties = new StringProperties();
-        properties.put(EmfModel.PROPERTY_NAME, name);
-        properties.put(EmfModel.PROPERTY_FILE_BASED_METAMODEL_URI,
-                metamodel);
-        properties.put(EmfModel.PROPERTY_MODEL_URI,
-                model);
-        properties.put(EmfModel.PROPERTY_READONLOAD, false + "");
-        properties.put(EmfModel.PROPERTY_STOREONDISPOSAL,
-                storeOnDisposal + "");
-        emfModel.load(properties, (IRelativePathResolver) null);
-        return emfModel;
-    }
-
-    /**
-     * Gets the model.
-     *
-     * @return the model
-     * @deprecated EMG can use any type of model
-     */
-    @Deprecated
-    protected EmfModel getModel() {
-        for(IModel mod:context.getModelRepository().getModels()){
-            if (mod instanceof EmfModel){
-                return (EmfModel) mod;
+            if (!instancesListName.isEmpty()) {
+            	instances.add(modelObject);
             }
         }
-        try {
-            throw new Exception();
-        } catch (Exception e) {
-            System.out.println("No EmfModel found");
-            e.printStackTrace();
-        }
-        return null;
     }
 
     /**
-     * Gets the int.
+     * Gets the integer representation of the object, either by casting or by parsing it as a String.
      *
      * @param object the object
      * @return the int
@@ -343,33 +280,6 @@ public class EmgModule extends EplModule {
             return (Integer)object;
         else
             return Integer.parseInt((String) object);
-    }
-
-    /**
-     * Gets the file path.
-     *
-     * @param file the file
-     * @return the file path
-     */
-    protected String getFilePath(String file){
-        URI ecoreUri= URI.createURI(file);
-        URI filePath = ecoreUri.trimFileExtension();
-        return filePath.toString();
-    }
-
-    /**
-     * Gets the new file path.
-     *
-     * @param file the file
-     * @param output the output
-     * @return the new file path
-     */
-    protected String getNewFilePath(String file, String output){
-        URI ecoreUri= URI.createURI(file);
-        if(!output.contains(".")) output=output+ ecoreUri.fileExtension();
-        URI filePath = ecoreUri.trimSegments(1);
-        filePath= filePath.appendSegment(output);
-        return filePath.toString();
     }
 
 }
